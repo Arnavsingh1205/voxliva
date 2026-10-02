@@ -1,0 +1,247 @@
+const express = require("express");
+const cors = require("cors");
+require("dotenv").config();
+
+const app = express();
+
+app.use(cors());
+app.use(express.json());
+
+
+// ==========================================
+// HOME ROUTE
+// ==========================================
+
+app.get("/", (req, res) => {
+  res.json({
+    success: true,
+    message: "Voxliva Backend is running 🚀",
+  });
+});
+
+
+// ==========================================
+// HEALTH CHECK
+// ==========================================
+
+app.get("/api/health", (req, res) => {
+  res.json({
+    success: true,
+    message: "Voxliva API is healthy",
+  });
+});
+
+
+// ==========================================
+// AI CHAT ROUTE
+// ==========================================
+
+app.post("/api/chat", async (req, res) => {
+  try {
+    const {
+      message,
+      character = "Maya",
+      mode = "Daily Conversation",
+    } = req.body;
+
+
+    // ----------------------------------------
+    // Validate message
+    // ----------------------------------------
+
+    if (!message || !message.trim()) {
+      return res.status(400).json({
+        success: false,
+        error: "Message is required",
+      });
+    }
+
+
+    // ----------------------------------------
+    // Character personalities
+    // ----------------------------------------
+
+    const personalities = {
+      Maya:
+        "friendly, patient, supportive and encouraging",
+
+      Ryan:
+        "confident, professional and motivating",
+
+      Sophia:
+        "friendly, college-oriented and casual",
+
+      Daniel:
+        "professional, polite and workplace-focused",
+
+      Emma:
+        "energetic, casual and friendly",
+
+      Alex:
+        "natural, relaxed and conversational",
+    };
+
+
+    const personality =
+      personalities[character] ||
+      "friendly and conversational";
+
+
+    // ----------------------------------------
+    // AI System Prompt
+    // ----------------------------------------
+
+    const systemPrompt = `
+You are ${character}, an English speaking practice partner
+inside an application called Voxliva.
+
+Your personality:
+${personality}
+
+Current practice mode:
+${mode}
+
+Your job is to help the user practice spoken English.
+
+Rules:
+
+1. Speak naturally like a real conversation partner.
+2. Keep replies short and conversational.
+3. Use simple English when possible.
+4. Ask natural follow-up questions.
+5. Encourage the user to keep speaking.
+6. Do not give long lectures.
+7. Stay in character as ${character}.
+8. If the user's sentence has an obvious grammar mistake,
+   gently provide the corrected sentence.
+9. Do not correct every small mistake during the conversation.
+10. Make the conversation feel natural and friendly.
+11. Ask only one or two questions at a time.
+12. Never mention that you are an AI unless the user asks.
+13. Do not break character.
+`;
+
+
+    // ----------------------------------------
+    // Check API key
+    // ----------------------------------------
+
+    if (!process.env.GROQ_API_KEY) {
+      return res.status(500).json({
+        success: false,
+        error: "GROQ_API_KEY is missing in .env file",
+      });
+    }
+
+
+    // ----------------------------------------
+    // Groq API Request
+    // ----------------------------------------
+
+    const response = await fetch(
+      "https://api.groq.com/openai/v1/chat/completions",
+      {
+        method: "POST",
+
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
+        },
+
+        body: JSON.stringify({
+          model: "openai/gpt-oss-20b",
+
+          messages: [
+            {
+              role: "system",
+              content: systemPrompt,
+            },
+
+            {
+              role: "user",
+              content: message.trim(),
+            },
+          ],
+
+          temperature: 0.7,
+
+          max_tokens: 250,
+        }),
+      }
+    );
+
+
+    // ----------------------------------------
+    // Convert response to JSON
+    // ----------------------------------------
+
+    const data = await response.json();
+
+
+    // ----------------------------------------
+    // Handle Groq errors
+    // ----------------------------------------
+
+    if (!response.ok) {
+      console.error("Groq API Error:", data);
+
+      return res.status(response.status).json({
+        success: false,
+        error:
+          data?.error?.message ||
+          "Groq API request failed",
+      });
+    }
+
+
+    // ----------------------------------------
+    // Get AI reply
+    // ----------------------------------------
+
+    const reply =
+      data?.choices?.[0]?.message?.content;
+
+
+    if (!reply) {
+      return res.status(500).json({
+        success: false,
+        error: "AI returned an empty response",
+      });
+    }
+
+
+    // ----------------------------------------
+    // Send response to frontend
+    // ----------------------------------------
+
+    res.json({
+      success: true,
+      character,
+      mode,
+      reply,
+    });
+
+
+  } catch (error) {
+
+    console.error("Server Error:", error);
+
+    res.status(500).json({
+      success: false,
+      error: "AI response failed",
+    });
+  }
+});
+
+
+// ==========================================
+// SERVER
+// ==========================================
+
+const PORT = process.env.PORT || 5001;
+
+app.listen(PORT, "127.0.0.1", () => {
+  console.log(
+    `Voxliva Backend running on http://127.0.0.1:${PORT}`
+  );
+});
