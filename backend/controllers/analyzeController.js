@@ -1,11 +1,5 @@
 import { callGroq } from "../services/groqService.js";
 
-/*
-|--------------------------------------------------------------------------
-| Score Helper
-|--------------------------------------------------------------------------
-*/
-
 function clampScore(value) {
   const score = Number(value);
 
@@ -13,17 +7,8 @@ function clampScore(value) {
     return 0;
   }
 
-  return Math.max(
-    0,
-    Math.min(100, Math.round(score))
-  );
+  return Math.max(0, Math.min(100, Math.round(score)));
 }
-
-/*
-|--------------------------------------------------------------------------
-| Array Helper
-|--------------------------------------------------------------------------
-*/
 
 function cleanStringArray(value) {
   if (!Array.isArray(value)) {
@@ -37,28 +22,23 @@ function cleanStringArray(value) {
       }
 
       if (item && typeof item === "object") {
-        return (
+        const text =
           item.explanation ||
           item.message ||
-          item.description ||
+          item.reason ||
           item.mistake ||
-          item.correction ||
+          item.error ||
           Object.values(item)
             .filter((v) => typeof v === "string")
-            .join(" → ")
-        ).trim();
+            .join(" → ");
+
+        return String(text || "").trim();
       }
 
       return String(item || "").trim();
     })
     .filter(Boolean);
 }
-
-/*
-|--------------------------------------------------------------------------
-| Analyze Controller
-|--------------------------------------------------------------------------
-*/
 
 async function analyzeController(req, res) {
   try {
@@ -70,26 +50,11 @@ async function analyzeController(req, res) {
       userName = "",
     } = req.body || {};
 
-    const safeCharacter =
-      String(character).trim();
-
-    const safeMode =
-      String(mode).trim();
-
-    const safeQuestion =
-      String(question).trim();
-
-    const safeAnswer =
-      String(answer).trim();
-
-    const safeUserName =
-      String(userName).trim();
-
-    /*
-    |--------------------------------------------------------------------------
-    | Validate Answer
-    |--------------------------------------------------------------------------
-    */
+    const safeCharacter = String(character).trim();
+    const safeMode = String(mode).trim();
+    const safeQuestion = String(question).trim();
+    const safeAnswer = String(answer).trim();
+    const safeUserName = String(userName).trim();
 
     if (!safeAnswer) {
       return res.status(400).json({
@@ -98,52 +63,48 @@ async function analyzeController(req, res) {
       });
     }
 
-    /*
-    |--------------------------------------------------------------------------
-    | AI Prompt
-    |--------------------------------------------------------------------------
-    */
-
     const messages = [
       {
         role: "system",
-
         content: `
-You are Voxliva's English speaking evaluator.
+You are Voxliva's strict but fair English speaking evaluator.
 
-Your job is to evaluate a learner's English answer.
+Evaluate the learner's answer against the AI question.
 
-Evaluate:
+PRIMARY GRAMMAR CHECKS — actively look for real errors in:
+1. Verb tense and tense consistency
+2. Prepositions
+3. Articles: a, an, the
+4. Sentence structure and word order
+5. Subject-verb agreement
+6. Wrong or unnatural word usage
+7. Plural/singular noun usage
+8. Pronoun usage
+9. Auxiliary/modal verb usage
+10. Natural English phrasing
 
-1. Grammar
-2. Fluency and naturalness
-3. Vocabulary
-
-IMPORTANT:
-
-- A short answer is NOT automatically wrong.
-- A simple sentence can still receive a high score.
+IMPORTANT SCORING RULES:
+- Do NOT penalize commas, full stops, question marks, exclamation marks, or capitalization.
+- Treat punctuation as irrelevant for grammar correctness unless the meaning itself becomes unclear without it.
+- A short answer is not automatically wrong.
+- A simple sentence can receive a high score when it is correct and natural.
 - Do not invent mistakes.
-- Only mention real grammar or language problems.
-- Judge the answer according to the question.
-- If the answer clearly answers the question and is grammatically acceptable, isCorrect should be true.
-- correctedSentence should be the most natural version of the learner's answer.
-- If the learner's sentence is already natural, keep it almost the same.
-- mistakes must contain short useful explanations.
-- practiceSentence should help the learner practice.
-- practiceTip should be short and practical.
-- Scores must be numbers from 0 to 100.
+- Only report genuine grammar, vocabulary, fluency, or naturalness problems.
+- Judge the answer according to the question and the intended meaning.
+- Do not mark an answer wrong merely because another wording is more advanced.
+- correctedSentence should preserve the learner's intended meaning while making the English natural.
+- mistakes must contain short, useful explanations, not generic labels.
+- grammarFeedback should mention the specific grammar category that needs work when a real error exists.
+- fluencyFeedback should focus on natural flow, repetition, hesitation, or awkward construction — not punctuation.
+- vocabularyFeedback should focus on wrong word choice, limited vocabulary, or unnatural word combinations.
+- Scores are integers from 0 to 100.
 
-VERY IMPORTANT:
+CORRECTNESS:
+- isCorrect may be true only when the answer is grammatically acceptable and naturally answers the question.
+- Do not use punctuation or capitalization as a reason to make isCorrect false.
+- Do not make isCorrect true just because the meaning is understandable if there is a clear grammar error.
 
-Return ONLY valid JSON.
-
-Do NOT use markdown.
-Do NOT use code fences.
-Do NOT write any explanation outside JSON.
-
-Use EXACTLY this JSON structure:
-
+Return ONLY valid JSON with exactly these fields:
 {
   "isCorrect": true,
   "correctedSentence": "string",
@@ -158,32 +119,19 @@ Use EXACTLY this JSON structure:
   "vocabularyFeedback": "string"
 }
 
-Every field MUST be present.
-Do not omit any field.
+Every field is required.
+Do not use Markdown or code fences.
 `,
       },
-
       {
         role: "user",
-
         content: `
-Character: ${
-          safeCharacter || "AI English Partner"
-        }
-
-Conversation mode: ${
-          safeMode || "Daily Conversation"
-        }
-
-Learner name: ${
-          safeUserName || "Not provided"
-        }
+Character: ${safeCharacter || "AI English Partner"}
+Conversation mode: ${safeMode || "Daily Conversation"}
+Learner name: ${safeUserName || "Not provided"}
 
 AI question:
-${
-  safeQuestion ||
-  "No question provided"
-}
+${safeQuestion || "No question provided"}
 
 Learner answer:
 ${safeAnswer}
@@ -191,132 +139,67 @@ ${safeAnswer}
       },
     ];
 
-    /*
-    |--------------------------------------------------------------------------
-    | Call Groq
-    |--------------------------------------------------------------------------
-    |
-    | IMPORTANT:
-    | We intentionally DO NOT send a json_schema here.
-    | This prevents the Groq structured-output schema
-    | mismatch error.
-    |
-    */
-
     const analysis = await callGroq({
       messages,
-
-      // No schema here
-
+      jsonMode: true,
       maxCompletionTokens: 1200,
     });
 
-    /*
-    |--------------------------------------------------------------------------
-    | Normalize AI Response
-    |--------------------------------------------------------------------------
-    */
-
     const normalizedAnalysis = {
-      isCorrect:
-        analysis?.isCorrect === true,
+      isCorrect: analysis?.isCorrect === true,
 
-      correctedSentence:
-        String(
+      correctedSentence: String(
+        analysis?.correctedSentence || safeAnswer
+      ).trim(),
+
+      mistakes: cleanStringArray(analysis?.mistakes),
+
+      practiceSentence: String(
+        analysis?.practiceSentence ||
           analysis?.correctedSentence ||
-            safeAnswer
-        ).trim(),
+          safeAnswer
+      ).trim(),
 
-      mistakes:
-        cleanStringArray(
-          analysis?.mistakes
-        ),
+      practiceTip: String(
+        analysis?.practiceTip ||
+          "Say the corrected sentence aloud and try it again."
+      ).trim(),
 
-      practiceSentence:
-        String(
-          analysis?.practiceSentence ||
-            analysis?.correctedSentence ||
-            safeAnswer
-        ).trim(),
+      grammarScore: clampScore(analysis?.grammarScore),
+      fluencyScore: clampScore(analysis?.fluencyScore),
+      vocabularyScore: clampScore(analysis?.vocabularyScore),
 
-      practiceTip:
-        String(
-          analysis?.practiceTip ||
-            "Try saying the corrected sentence aloud."
-        ).trim(),
+      grammarFeedback: String(
+        analysis?.grammarFeedback ||
+          "Check your tense, sentence structure, articles, prepositions, and subject-verb agreement."
+      ).trim(),
 
-      grammarScore:
-        clampScore(
-          analysis?.grammarScore
-        ),
+      fluencyFeedback: String(
+        analysis?.fluencyFeedback ||
+          "Try to speak smoothly and use natural sentence patterns."
+      ).trim(),
 
-      fluencyScore:
-        clampScore(
-          analysis?.fluencyScore
-        ),
-
-      vocabularyScore:
-        clampScore(
-          analysis?.vocabularyScore
-        ),
-
-      grammarFeedback:
-        String(
-          analysis?.grammarFeedback ||
-            "Your grammar is understandable. Keep practicing sentence structure."
-        ).trim(),
-
-      fluencyFeedback:
-        String(
-          analysis?.fluencyFeedback ||
-            "Try to speak smoothly and naturally."
-        ).trim(),
-
-      vocabularyFeedback:
-        String(
-          analysis?.vocabularyFeedback ||
-            "Keep learning and using new everyday words."
-        ).trim(),
+      vocabularyFeedback: String(
+        analysis?.vocabularyFeedback ||
+          "Use words that fit the intended meaning and context naturally."
+      ).trim(),
     };
 
-    /*
-    |--------------------------------------------------------------------------
-    | Calculate Correctness Safely
-    |--------------------------------------------------------------------------
-    */
-
-    if (
+    normalizedAnalysis.isCorrect =
       normalizedAnalysis.grammarScore >= 80 &&
       normalizedAnalysis.fluencyScore >= 70 &&
-      normalizedAnalysis.vocabularyScore >= 65
-    ) {
-      normalizedAnalysis.isCorrect = true;
-    }
-
-    /*
-    |--------------------------------------------------------------------------
-    | Response
-    |--------------------------------------------------------------------------
-    */
+      normalizedAnalysis.vocabularyScore >= 65;
 
     return res.json({
       success: true,
-
       analysis: normalizedAnalysis,
-
-      // Keep this because your current frontend
-      // already supports feedback.
       feedback: normalizedAnalysis,
     });
   } catch (error) {
-    console.error(
-      "Analyze controller error:",
-      error
-    );
+    console.error("Analyze controller error:", error);
 
     return res.status(500).json({
       success: false,
-
       message:
         error?.message ||
         "Failed to analyze the answer.",
@@ -324,14 +207,5 @@ ${safeAnswer}
   }
 }
 
-/*
-|--------------------------------------------------------------------------
-| Export
-|--------------------------------------------------------------------------
-*/
-
-export {
-  analyzeController,
-};
-
+export { analyzeController };
 export default analyzeController;

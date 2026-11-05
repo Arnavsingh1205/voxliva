@@ -1,26 +1,26 @@
 import { Router } from "express";
 
 import {
-  signupController,
-  loginController,
-  getCurrentUserController,
+  signup,
+  login,
+  getCurrentUser,
 } from "../controllers/authController.js";
 
 import authMiddleware from "../middleware/authMiddleware.js";
 
 const router = Router();
 
-// Signup
-router.post("/signup", signupController);
+// Create a new user account
+router.post("/signup", signup);
 
-// Login
-router.post("/login", loginController);
+// Log in an existing user
+router.post("/login", login);
 
-// Current logged-in user
+// Get the currently authenticated user
 router.get(
   "/me",
   authMiddleware,
-  getCurrentUserController
+  getCurrentUser
 );
 
 export default router;

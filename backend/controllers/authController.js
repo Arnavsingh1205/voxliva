@@ -1,6 +1,13 @@
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+
 import User from "../models/User.js";
+
+/*
+|--------------------------------------------------------------------------
+| Create JWT Token
+|--------------------------------------------------------------------------
+*/
 
 function createToken(userId) {
   if (!process.env.JWT_SECRET) {
@@ -8,7 +15,9 @@ function createToken(userId) {
   }
 
   return jwt.sign(
-    { userId },
+    {
+      userId,
+    },
     process.env.JWT_SECRET,
     {
       expiresIn: "7d",
@@ -16,35 +25,83 @@ function createToken(userId) {
   );
 }
 
+/*
+|--------------------------------------------------------------------------
+| User Response
+|--------------------------------------------------------------------------
+*/
+
 function userResponse(user) {
   return {
     id: user._id,
     name: user.name,
     email: user.email,
+
     profile: {
-      conversations: user.profile?.conversations || 0,
+      conversations:
+        user.profile?.conversations || 0,
+
       practiceMinutes:
         user.profile?.practiceMinutes || 0,
-      streak: user.profile?.streak || 0,
+
+      streak:
+        user.profile?.streak || 0,
+    },
+
+    usage: {
+      date:
+        user.usage?.date || "",
+
+      aiSessions:
+        user.usage?.aiSessions || 0,
+
+      aiTurns:
+        user.usage?.aiTurns || 0,
+
+      aiTests:
+        user.usage?.aiTests || 0,
+
+      practiceMinutesToday:
+        user.usage?.practiceMinutesToday || 0,
+
+      currentSession: {
+        startedAt:
+          user.usage?.currentSession?.startedAt ||
+          null,
+
+        turns:
+          user.usage?.currentSession?.turns ||
+          0,
+
+        active:
+          user.usage?.currentSession?.active ||
+          false,
+      },
     },
   };
 }
 
-async function signupController(req, res) {
+/*
+|--------------------------------------------------------------------------
+| Signup
+|--------------------------------------------------------------------------
+*/
+
+async function signup(req, res) {
   try {
     const {
-      name = "",
-      email = "",
-      password = "",
-    } = req.body || {};
+      name,
+      email,
+      password,
+    } = req.body;
 
-    const safeName = String(name).trim();
-    const safeEmail = String(email)
-      .trim()
-      .toLowerCase();
-    const safePassword = String(password);
+    /*
+    |--------------------------------------------------------------------------
+    | Validation
+    |--------------------------------------------------------------------------
+    */
 
-    if (!safeName || !safeEmail || !safePassword) {
+    if (!name || !email || !password) {
       return res.status(400).json({
         success: false,
         message:
@@ -52,17 +109,37 @@ async function signupController(req, res) {
       });
     }
 
-    if (safePassword.length < 6) {
+    const cleanName = String(name).trim();
+    const cleanEmail = String(email)
+      .trim()
+      .toLowerCase();
+
+    if (cleanName.length < 2) {
       return res.status(400).json({
         success: false,
         message:
-          "Password must be at least 6 characters.",
+          "Name must contain at least 2 characters.",
       });
     }
 
-    const existingUser = await User.findOne({
-      email: safeEmail,
-    });
+    if (password.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Password must contain at least 6 characters.",
+      });
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Check Existing User
+    |--------------------------------------------------------------------------
+    */
+
+    const existingUser =
+      await User.findOne({
+        email: cleanEmail,
+      });
 
     if (existingUser) {
       return res.status(409).json({
@@ -72,54 +149,82 @@ async function signupController(req, res) {
       });
     }
 
-    const hashedPassword = await bcrypt.hash(
-      safePassword,
-      12
-    );
+    /*
+    |--------------------------------------------------------------------------
+    | Hash Password
+    |--------------------------------------------------------------------------
+    */
+
+    const hashedPassword =
+      await bcrypt.hash(password, 12);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Create User
+    |--------------------------------------------------------------------------
+    */
 
     const user = await User.create({
-      name: safeName,
-      email: safeEmail,
+      name: cleanName,
+      email: cleanEmail,
       password: hashedPassword,
     });
 
+    /*
+    |--------------------------------------------------------------------------
+    | Create Token
+    |--------------------------------------------------------------------------
+    */
+
     const token = createToken(user._id.toString());
+
+    /*
+    |--------------------------------------------------------------------------
+    | Response
+    |--------------------------------------------------------------------------
+    */
 
     return res.status(201).json({
       success: true,
-      message: "Account created successfully.",
+      message:
+        "Account created successfully.",
       token,
       user: userResponse(user),
     });
   } catch (error) {
     console.error(
-      "Signup controller error:",
+      "Signup error:",
       error
     );
 
     return res.status(500).json({
       success: false,
       message:
-        error?.message ||
-        "Failed to create account.",
+        "Unable to create account.",
     });
   }
 }
 
-async function loginController(req, res) {
+/*
+|--------------------------------------------------------------------------
+| Login
+|--------------------------------------------------------------------------
+*/
+
+async function login(req, res) {
   try {
     const {
-      email = "",
-      password = "",
-    } = req.body || {};
+      email,
+      password,
+    } = req.body;
 
-    const safeEmail = String(email)
-      .trim()
-      .toLowerCase();
+    /*
+    |--------------------------------------------------------------------------
+    | Validation
+    |--------------------------------------------------------------------------
+    */
 
-    const safePassword = String(password);
-
-    if (!safeEmail || !safePassword) {
+    if (!email || !password) {
       return res.status(400).json({
         success: false,
         message:
@@ -127,66 +232,110 @@ async function loginController(req, res) {
       });
     }
 
-    const user = await User.findOne({
-      email: safeEmail,
-    });
+    const cleanEmail = String(email)
+      .trim()
+      .toLowerCase();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Find User
+    |--------------------------------------------------------------------------
+    */
+
+    const user =
+      await User.findOne({
+        email: cleanEmail,
+      });
 
     if (!user) {
       return res.status(401).json({
         success: false,
-        message: "Invalid email or password.",
+        message:
+          "Invalid email or password.",
       });
     }
 
+    /*
+    |--------------------------------------------------------------------------
+    | Compare Password
+    |--------------------------------------------------------------------------
+    */
+
     const passwordMatches =
       await bcrypt.compare(
-        safePassword,
+        password,
         user.password
       );
 
     if (!passwordMatches) {
       return res.status(401).json({
         success: false,
-        message: "Invalid email or password.",
+        message:
+          "Invalid email or password.",
       });
     }
 
+    /*
+    |--------------------------------------------------------------------------
+    | Create Token
+    |--------------------------------------------------------------------------
+    */
+
     const token = createToken(user._id.toString());
+
+    /*
+    |--------------------------------------------------------------------------
+    | Response
+    |--------------------------------------------------------------------------
+    */
 
     return res.json({
       success: true,
-      message: "Login successful.",
+      message:
+        "Login successful.",
       token,
       user: userResponse(user),
     });
   } catch (error) {
     console.error(
-      "Login controller error:",
+      "Login error:",
       error
     );
 
     return res.status(500).json({
       success: false,
       message:
-        error?.message ||
-        "Failed to login.",
+        "Unable to login.",
     });
   }
 }
 
-async function getCurrentUserController(
-  req,
-  res
-) {
+/*
+|--------------------------------------------------------------------------
+| Get Current User
+|--------------------------------------------------------------------------
+*/
+
+async function getCurrentUser(req, res) {
   try {
-    const user = await User.findById(
-      req.user.userId
-    ).select("-password");
+    if (!req.user?.userId) {
+      return res.status(401).json({
+        success: false,
+        message:
+          "Authentication required.",
+      });
+    }
+
+    const user =
+      await User.findById(
+        req.user.userId
+      );
 
     if (!user) {
       return res.status(404).json({
         success: false,
-        message: "User not found.",
+        message:
+          "User not found.",
       });
     }
 
@@ -203,19 +352,25 @@ async function getCurrentUserController(
     return res.status(500).json({
       success: false,
       message:
-        "Failed to get current user.",
+        "Unable to get current user.",
     });
   }
 }
 
+/*
+|--------------------------------------------------------------------------
+| Exports
+|--------------------------------------------------------------------------
+*/
+
 export {
-  signupController,
-  loginController,
-  getCurrentUserController,
+  signup,
+  login,
+  getCurrentUser,
 };
 
 export default {
-  signupController,
-  loginController,
-  getCurrentUserController,
+  signup,
+  login,
+  getCurrentUser,
 };

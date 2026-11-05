@@ -1,5 +1,9 @@
 import { callGroq } from "../services/groqService.js";
 
+import {
+  recordAiTurn,
+} from "../middleware/usageMiddleware.js";
+
 /*
 |--------------------------------------------------------------------------
 | Groq Structured Output Schema
@@ -8,6 +12,7 @@ import { callGroq } from "../services/groqService.js";
 
 const chatSchema = {
   name: "voxliva_chat_response",
+
   strict: true,
 
   schema: {
@@ -16,20 +21,24 @@ const chatSchema = {
     properties: {
       reply: {
         type: "string",
+
         description:
           "The natural spoken reply from the AI character.",
       },
 
       question: {
         type: "string",
+
         description:
           "Exactly one short question for the learner.",
       },
 
       options: {
         type: "array",
+
         description:
           "Exactly five natural English answer suggestions.",
+
         items: {
           type: "string",
         },
@@ -78,7 +87,9 @@ const characterPersonalities = {
 |--------------------------------------------------------------------------
 */
 
-function normalizeHistory(history = []) {
+function normalizeHistory(
+  history = []
+) {
   if (!Array.isArray(history)) {
     return [];
   }
@@ -100,10 +111,15 @@ function normalizeHistory(history = []) {
 
       return {
         role,
-        content: String(content).trim(),
+
+        content:
+          String(content).trim(),
       };
     })
-    .filter((item) => item.content);
+    .filter(
+      (item) =>
+        item.content
+    );
 }
 
 /*
@@ -119,24 +135,31 @@ function buildSystemPrompt({
   isFirstTurn,
 }) {
   const personality =
-    characterPersonalities[character] ||
+    characterPersonalities[
+      character
+    ] ||
     "Friendly, natural and supportive English conversation partner.";
 
-  const nameInstruction = userName
-    ? `The learner's name is ${userName}. Use their name naturally when appropriate. Do not repeat their name in every response.`
-    : "Do not invent or assume the learner's name.";
+  const nameInstruction =
+    userName
+      ? `The learner's name is ${userName}. Use their name naturally when appropriate. Do not repeat their name in every response.`
+      : "Do not invent or assume the learner's name.";
 
-  const introductionInstruction = isFirstTurn
-    ? `This is the first turn. Briefly introduce yourself as ${character} and greet the learner naturally. Keep the introduction short.`
-    : `This is NOT the first turn. Never introduce yourself again. Do not say "Hi, I'm ${character}" or repeat your introduction. Continue the existing conversation naturally.`;
+  const introductionInstruction =
+    isFirstTurn
+      ? `This is the first turn. Briefly introduce yourself as ${character} and greet the learner naturally. Keep the introduction short.`
+      : `This is NOT the first turn. Never introduce yourself again. Do not say "Hi, I'm ${character}" or repeat your introduction. Continue the existing conversation naturally.`;
 
   return `
+
 You are ${character}, an AI English speaking partner in Voxliva.
 
 Conversation mode:
+
 ${mode || "Daily Conversation"}
 
 Personality:
+
 ${personality}
 
 ${nameInstruction}
@@ -144,12 +167,14 @@ ${nameInstruction}
 ${introductionInstruction}
 
 IMPORTANT OUTPUT RULES:
+
 - Return ONLY the structured response requested by the schema.
 - Do not write Markdown.
 - Do not write JSON inside a code block.
 - Do not add explanations outside the requested fields.
 
 Conversation rules:
+
 - Speak naturally and conversationally.
 - Help the learner practice English.
 - Do not sound robotic.
@@ -164,7 +189,95 @@ Conversation rules:
 - Do not provide grammar analysis here.
 - Grammar analysis is handled separately.
 - Do not repeat the same question unnecessarily.
+
 `;
+}
+
+/*
+|--------------------------------------------------------------------------
+| Send AI Response + Record Usage
+|--------------------------------------------------------------------------
+*/
+
+async function sendConversationResponse({
+  req,
+  res,
+  safeCharacter,
+  safeMode,
+  data,
+}) {
+  const options =
+    Array.isArray(
+      data?.options
+    )
+      ? data.options
+          .map((option) =>
+            String(option).trim()
+          )
+          .filter(Boolean)
+          .slice(0, 5)
+      : [];
+
+  /*
+  |--------------------------------------------------------------------------
+  | Count Only Successful AI Conversation Responses
+  |--------------------------------------------------------------------------
+  */
+
+  const updatedUser =
+    await recordAiTurn(
+      req.user.userId
+    );
+
+  return res.json({
+    success: true,
+
+    character:
+      safeCharacter,
+
+    mode:
+      safeMode,
+
+    reply:
+      String(
+        data?.reply || ""
+      ).trim(),
+
+    question:
+      String(
+        data?.question || ""
+      ).trim(),
+
+    options,
+
+    usage: {
+      aiTurns:
+        updatedUser.usage
+          .aiTurns,
+
+      sessionTurns:
+        updatedUser.usage
+          .currentSession
+          .turns,
+
+      sessionMinutes:
+        Math.max(
+          0,
+          Math.floor(
+            (
+              Date.now() -
+              new Date(
+                updatedUser
+                  .usage
+                  .currentSession
+                  .startedAt
+              ).getTime()
+            ) /
+              60000
+          )
+        ),
+    },
+  });
 }
 
 /*
@@ -173,14 +286,23 @@ Conversation rules:
 |--------------------------------------------------------------------------
 */
 
-async function chatController(req, res) {
+async function chatController(
+  req,
+  res
+) {
   try {
     const {
       character = "Maya",
-      mode = "Daily Conversation",
+
+      mode =
+        "Daily Conversation",
+
       message = "",
+
       userName = "",
+
       start = false,
+
       history = [],
     } = req.body || {};
 
@@ -191,10 +313,12 @@ async function chatController(req, res) {
     */
 
     const safeCharacter =
-      String(character).trim() || "Maya";
+      String(character).trim() ||
+      "Maya";
 
     const safeMode =
-      String(mode).trim() || "Daily Conversation";
+      String(mode).trim() ||
+      "Daily Conversation";
 
     const safeMessage =
       String(message).trim();
@@ -221,11 +345,16 @@ async function chatController(req, res) {
     |--------------------------------------------------------------------------
     */
 
-    if (safeMode === "Grammar Teaching") {
+    if (
+      safeMode ===
+      "Grammar Teaching"
+    ) {
       const messages = [
         {
           role: "system",
+
           content: `
+
 You are Voxliva's English Grammar Teacher.
 
 Teach English grammar in simple and beginner-friendly language.
@@ -247,6 +376,7 @@ Important output rules:
 - The "reply" field should contain the grammar explanation.
 - The "question" field should contain one practice question.
 - The "options" field should contain exactly five possible answers.
+
 `,
         },
 
@@ -254,27 +384,46 @@ Important output rules:
 
         {
           role: "user",
+
           content:
             safeMessage ||
             "Teach me an important English grammar rule.",
         },
       ];
 
-      const data = await callGroq({
-        messages,
-        schema: chatSchema,
-        maxCompletionTokens: 500,
-      });
+      const data =
+        await callGroq({
+          messages,
+
+          schema:
+            chatSchema,
+
+          maxCompletionTokens:
+            500,
+        });
 
       return res.json({
         success: true,
-        character: safeCharacter,
-        mode: safeMode,
-        reply: data.reply,
-        question: data.question,
-        options: Array.isArray(data.options)
-          ? data.options.slice(0, 5)
-          : [],
+
+        character:
+          safeCharacter,
+
+        mode:
+          safeMode,
+
+        reply:
+          data.reply,
+
+        question:
+          data.question,
+
+        options:
+          Array.isArray(
+            data.options
+          )
+            ? data.options
+                .slice(0, 5)
+            : [],
       });
     }
 
@@ -284,11 +433,16 @@ Important output rules:
     |--------------------------------------------------------------------------
     */
 
-    if (safeMode === "Hindi to English") {
+    if (
+      safeMode ===
+      "Hindi to English"
+    ) {
       const messages = [
         {
           role: "system",
+
           content: `
+
 You are Voxliva's Hindi/Hinglish to Natural English teacher.
 
 The learner may write in:
@@ -316,6 +470,7 @@ Important output rules:
 - The "reply" field should contain the explanation and natural English sentence.
 - The "question" field should contain one practice question.
 - The "options" field should contain exactly five natural English answers.
+
 `,
         },
 
@@ -323,27 +478,46 @@ Important output rules:
 
         {
           role: "user",
+
           content:
             safeMessage ||
             "Mujhe English bolna practice karna hai.",
         },
       ];
 
-      const data = await callGroq({
-        messages,
-        schema: chatSchema,
-        maxCompletionTokens: 500,
-      });
+      const data =
+        await callGroq({
+          messages,
+
+          schema:
+            chatSchema,
+
+          maxCompletionTokens:
+            500,
+        });
 
       return res.json({
         success: true,
-        character: safeCharacter,
-        mode: safeMode,
-        reply: data.reply,
-        question: data.question,
-        options: Array.isArray(data.options)
-          ? data.options.slice(0, 5)
-          : [],
+
+        character:
+          safeCharacter,
+
+        mode:
+          safeMode,
+
+        reply:
+          data.reply,
+
+        question:
+          data.question,
+
+        options:
+          Array.isArray(
+            data.options
+          )
+            ? data.options
+                .slice(0, 5)
+            : [],
       });
     }
 
@@ -355,16 +529,24 @@ Important output rules:
 
     const systemPrompt =
       buildSystemPrompt({
-        character: safeCharacter,
-        mode: safeMode,
-        userName: safeUserName,
+        character:
+          safeCharacter,
+
+        mode:
+          safeMode,
+
+        userName:
+          safeUserName,
+
         isFirstTurn,
       });
 
     const messages = [
       {
         role: "system",
-        content: systemPrompt,
+
+        content:
+          systemPrompt,
       },
 
       ...safeHistory,
@@ -374,16 +556,14 @@ Important output rules:
     |--------------------------------------------------------------------------
     | Add Learner Message
     |--------------------------------------------------------------------------
-    |
-    | On the first turn, the frontend may send an empty message
-    | so that Maya starts the conversation herself.
-    |
     */
 
     if (safeMessage) {
       messages.push({
         role: "user",
-        content: safeMessage,
+
+        content:
+          safeMessage,
       });
     }
 
@@ -393,58 +573,49 @@ Important output rules:
     |--------------------------------------------------------------------------
     */
 
-    const data = await callGroq({
-      messages,
-      schema: chatSchema,
-      maxCompletionTokens: 1000,
-    });
+    const data =
+      await callGroq({
+        messages,
+
+        schema:
+          chatSchema,
+
+        maxCompletionTokens:
+          1000,
+      });
 
     /*
     |--------------------------------------------------------------------------
-    | Normalize Options
+    | Final Response + Usage
     |--------------------------------------------------------------------------
     */
 
-    const options =
-      Array.isArray(data?.options)
-        ? data.options
-            .map((option) =>
-              String(option).trim()
-            )
-            .filter(Boolean)
-            .slice(0, 5)
-        : [];
+    return await sendConversationResponse({
+      req,
 
-    /*
-    |--------------------------------------------------------------------------
-    | Final Response
-    |--------------------------------------------------------------------------
-    */
+      res,
 
-    return res.json({
-      success: true,
-      character: safeCharacter,
-      mode: safeMode,
-      reply: String(data?.reply || "").trim(),
-      question: String(
-        data?.question || ""
-      ).trim(),
-      options,
+      safeCharacter,
+
+      safeMode,
+
+      data,
     });
   } catch (error) {
-    /*
-    |--------------------------------------------------------------------------
-    | Error Handling
-    |--------------------------------------------------------------------------
-    */
-
     console.error(
       "Chat controller error:",
       error
     );
 
-    return res.status(500).json({
+    return res.status(
+      error?.status || 500
+    ).json({
       success: false,
+
+      code:
+        error?.code ||
+        "CHAT_ERROR",
+
       message:
         error?.message ||
         "Failed to generate AI conversation.",

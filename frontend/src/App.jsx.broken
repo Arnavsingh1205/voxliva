@@ -1,0 +1,140 @@
+                        fontWeight: 900,
+                      }}
+                    >
+                      🔄 Retake {aiTestMode} Test
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </section>
+        )}
+      </section>
+
+      <footer className="vx-footer">
+        <h2>Test. Learn. Improve.</h2>
+        <p>
+          Use AI-powered tests to understand and improve your English.
+        </p>
+      </footer>
+    </>
+  );
+
+  const learnPage = (
+    <>
+      {renderNav()}
+      <section className="vx-section" style={{minHeight:"calc(100vh - 76px)"}}><div className="vx-section-head"><span className="vx-badge">LEARNING STUDIO</span><h2>Learn English with Voxliva</h2><p>Fix grammar, build natural sentences and turn Hindi/Hinglish thoughts into confident English.</p></div><div className="vx-learn-grid"><div className="vx-learn-card"><div className="big">📚</div><h2>English Grammar Teacher</h2><p>Learn the rule, examples, common mistakes and a practical explanation.</p><select value={grammarTopic} onChange={e=>setGrammarTopic(e.target.value)}><option>Present Simple</option><option>Present Continuous</option><option>Past Simple</option><option>Future Tense</option><option>Articles (a, an, the)</option><option>Prepositions</option><option>Has / Have / Had</option><option>Is / Am / Are</option><option>Was / Were</option><option>Can / Could / Should</option><option>Since / For</option></select><button onClick={askGrammarTeacher} disabled={grammarLoading}>{grammarLoading?"Teaching...":"Teach Me"}</button>{grammarAnswer&&<div className="vx-learn-result">{grammarAnswer}</div>}</div><div className="vx-learn-card"><div className="big">🇮🇳 → 🇬🇧</div><h2>Hindi / Hinglish → Natural English</h2><p>Type your thought or speak Hindi/Hinglish and learn how to say it naturally in English.</p><textarea value={hindiText} onChange={e=>setHindiText(e.target.value)} placeholder="Example: Mujhe kal college jana hai..."/><div style={{display:"flex",gap:8,flexWrap:"wrap"}}><button onClick={startHindiListening}>{hindiListening?"🎙️ Listening...":"🎤 Speak Hindi"}</button><button onClick={()=>translateToEnglish()} disabled={translateLoading}>{translateLoading?"Translating...":"Translate to English"}</button></div>{englishReply&&<div className="vx-learn-result">{englishReply}</div>}</div></div></section>
+      <footer className="vx-footer"><h2>Keep learning with Voxliva</h2><p>Grammar • Speaking • Vocabulary • Natural English</p></footer>
+    </>
+  );
+
+  const authModal = authOpen && authMode !== "profile" ? (
+    <div className="vx-auth-overlay" onMouseDown={closeAuth}>
+      <div className="vx-auth-modal" onMouseDown={(event) => event.stopPropagation()}>
+        <button className="vx-auth-close" onClick={closeAuth}>×</button>
+
+        <div className="vx-auth-brand">Vox<span>liva</span></div>
+        <h2>{authMode === "login" ? "Welcome back" : "Create your Voxliva account"}</h2>
+        <p className="vx-auth-subtitle">
+          {authMode === "login"
+            ? "Login to continue your English speaking practice."
+            : "Create an account to save your Voxliva progress."}
+        </p>
+
+        <div className="vx-auth-tabs">
+          <button className={authMode === "login" ? "active" : ""} onClick={() => { setAuthMode("login"); setAuthError(""); }}>
+            Login
+          </button>
+          <button className={authMode === "signup" ? "active" : ""} onClick={() => { setAuthMode("signup"); setAuthError(""); }}>
+            Sign Up
+          </button>
+        </div>
+
+        <form onSubmit={handleAuthSubmit} className="vx-auth-form">
+          {authMode === "signup" && (
+            <label>
+              Full name
+              <input
+                value={authForm.name}
+                onChange={(e) => setAuthForm((prev) => ({ ...prev, name: e.target.value }))}
+                placeholder="Enter your name"
+                autoComplete="name"
+              />
+            </label>
+          )}
+
+          <label>
+            Email
+            <input
+              type="email"
+              value={authForm.email}
+              onChange={(e) => setAuthForm((prev) => ({ ...prev, email: e.target.value }))}
+              placeholder="you@example.com"
+              autoComplete="email"
+            />
+          </label>
+
+          <label>
+            Password
+            <input
+              type="password"
+              value={authForm.password}
+              onChange={(e) => setAuthForm((prev) => ({ ...prev, password: e.target.value }))}
+              placeholder="Minimum 6 characters"
+              autoComplete={authMode === "login" ? "current-password" : "new-password"}
+            />
+          </label>
+
+          {authError && <div className="vx-auth-error">{authError}</div>}
+
+          <button className="vx-auth-submit" type="submit" disabled={authLoading}>
+            {authLoading
+              ? "Please wait..."
+              : authMode === "login"
+              ? "Login to Voxliva"
+              : "Create Account"}
+          </button>
+        </form>
+
+        <p className="vx-auth-switch">
+          {authMode === "login" ? "Don't have an account?" : "Already have an account?"}
+          <button onClick={() => { setAuthMode(authMode === "login" ? "signup" : "login"); setAuthError(""); }}>
+            {authMode === "login" ? "Sign Up" : "Login"}
+          </button>
+        </p>
+      </div>
+    </div>
+  ) : null;
+
+  const authStyles = `
+    .vx-auth-actions,.vx-auth-user{display:flex;align-items:center;gap:8px}
+    .vx-login-btn,.vx-signup-btn,.vx-logout{border:0;cursor:pointer;font-weight:850;border-radius:11px;padding:10px 14px}
+    .vx-login-btn{background:transparent;color:#5e586a}.vx-signup-btn{background:#7549cf;color:#fff}
+    .vx-logout{background:#f3edff;color:#7045c7}.vx-profile{cursor:pointer}
+    .vx-auth-overlay{position:fixed;inset:0;background:rgba(24,17,38,.58);backdrop-filter:blur(7px);z-index:1000;display:grid;place-items:center;padding:20px}
+    .vx-auth-modal{width:min(440px,100%);background:#fff;border-radius:26px;padding:30px;position:relative;box-shadow:0 30px 80px rgba(20,12,40,.28)}
+    .vx-auth-close{position:absolute;right:16px;top:12px;border:0;background:#f4effa;color:#5d526e;width:34px;height:34px;border-radius:50%;font-size:24px;cursor:pointer}
+    .vx-auth-brand{font-size:28px;font-weight:950;letter-spacing:-1.5px}.vx-auth-brand span{color:#7549cf}
+    .vx-auth-modal h2{margin:18px 0 6px;font-size:27px}.vx-auth-subtitle{margin:0 0 20px;color:#777080;font-size:14px;line-height:1.5}
+    .vx-auth-tabs{display:grid;grid-template-columns:1fr 1fr;background:#f5f1fa;padding:4px;border-radius:13px;margin-bottom:18px}
+    .vx-auth-tabs button{border:0;background:transparent;padding:10px;border-radius:10px;font-weight:850;color:#756b82;cursor:pointer}
+    .vx-auth-tabs button.active{background:#fff;color:#7044c5;box-shadow:0 3px 10px rgba(60,35,100,.08)}
+    .vx-auth-form{display:grid;gap:14px}.vx-auth-form label{display:grid;gap:6px;font-size:13px;font-weight:800;color:#42384e}
+    .vx-auth-form input{width:100%;border:1px solid #ddd3eb;border-radius:12px;padding:12px 13px;font:inherit;outline:none}
+    .vx-auth-form input:focus{border-color:#7a4bd2;box-shadow:0 0 0 3px rgba(122,75,210,.1)}
+    .vx-auth-submit{border:0;border-radius:13px;padding:13px;background:linear-gradient(135deg,#8255df,#6034b5);color:#fff;font-weight:900;font-size:15px;cursor:pointer}
+    .vx-auth-submit:disabled{opacity:.65;cursor:not-allowed}.vx-auth-error{padding:10px 12px;border-radius:11px;background:#fff0f0;color:#c0392b;font-size:13px;font-weight:700}
+    .vx-auth-switch{text-align:center;color:#777080;font-size:13px;margin:17px 0 0}.vx-auth-switch button{border:0;background:transparent;color:#7044c5;font-weight:900;cursor:pointer}
+    @media(max-width:620px){.vx-auth-user .vx-logout{display:none}.vx-profile{padding:9px 11px!important}.vx-auth-actions{gap:4px}.vx-login-btn,.vx-signup-btn{padding:8px 10px;font-size:12px}}
+  `;
+
+  return (
+    <div className="vx-shell">
+      <style>{globalStyles + authStyles}</style>
+      {page === "home" ? homePage : page === "characters" ? charactersPage : page === "practice" ? practicePage : page === "test" ? testPage : learnPage}
+      {authModal}
+    </div>
+  );
+}
+
+export default App;

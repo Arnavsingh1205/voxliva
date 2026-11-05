@@ -5,79 +5,173 @@ import {
   useMemo,
   useState,
 } from "react";
+import { API_BASE_URL } from "../services/api.js";
+import {
+  clearStoredAuth,
+  getStoredAuth,
+  storeAuth,
+} from "../services/authStorage.js";
 
 const AuthContext = createContext(null);
-
-const STORAGE_KEY = "voxliva_user";
+export const UNAUTHORIZED_EVENT = "voxliva:unauthorized";
 
 function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
+  const [token, setToken] = useState("");
   const [loading, setLoading] = useState(true);
 
+  /*
+  |--------------------------------------------------------------------------
+  | Restore Login
+  |--------------------------------------------------------------------------
+  */
+
   useEffect(() => {
-    try {
-      const savedUser =
-        localStorage.getItem(STORAGE_KEY);
+    let cancelled = false;
 
-      if (savedUser) {
-        setUser(JSON.parse(savedUser));
+    const restoreSession = async () => {
+      const stored = getStoredAuth();
+      if (!stored.token || !stored.user) {
+        if (!cancelled) setLoading(false);
+        return;
       }
-    } catch (error) {
-      console.error(
-        "Failed to restore user:",
-        error
-      );
 
-      localStorage.removeItem(STORAGE_KEY);
-    } finally {
-      setLoading(false);
-    }
+      setUser(stored.user);
+      setToken(stored.token);
+
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/auth/me`, {
+          headers: {
+            Authorization: `Bearer ${stored.token}`,
+          },
+        });
+        const data = await response.json().catch(() => null);
+
+        if (response.status === 401) {
+          clearStoredAuth();
+          if (!cancelled) {
+            setUser(null);
+            setToken("");
+          }
+        } else if (response.ok && data?.success && data.user) {
+          if (!cancelled) {
+            storeAuth(data.user, stored.token);
+            setUser(data.user);
+            setToken(stored.token);
+          }
+        }
+      } catch {
+        // Keep the session usable offline; protected API requests still validate it.
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    restoreSession();
+
+    const handleUnauthorized = () => logout();
+    window.addEventListener(UNAUTHORIZED_EVENT, handleUnauthorized);
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener(UNAUTHORIZED_EVENT, handleUnauthorized);
+    };
   }, []);
 
-  const login = (userData) => {
-    setUser(userData);
+  /*
+  |--------------------------------------------------------------------------
+  | Login
+  |--------------------------------------------------------------------------
+  */
 
-    localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify(userData)
-    );
+  const login = (userData, token) => {
+    if (!userData || !token) return false;
+    clearStoredAuth();
+    storeAuth(userData, token);
+    setUser(userData);
+    setToken(token);
+    return true;
   };
 
-  const signup = (userData) => {
-    setUser(userData);
+  /*
+  |--------------------------------------------------------------------------
+  | Signup
+  |--------------------------------------------------------------------------
+  */
 
-    localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify(userData)
-    );
+  const signup = (userData, token) => {
+    if (!userData || !token) return false;
+    clearStoredAuth();
+    storeAuth(userData, token);
+    setUser(userData);
+    setToken(token);
+    return true;
   };
+
+  /*
+  |--------------------------------------------------------------------------
+  | Update User
+  |--------------------------------------------------------------------------
+  */
+
+  const updateUser = (userData) => {
+    setUser(userData);
+    const saved = getStoredAuth();
+    if (saved.token) storeAuth(userData, saved.token);
+  };
+
+  /*
+  |--------------------------------------------------------------------------
+  | Logout
+  |--------------------------------------------------------------------------
+  */
 
   const logout = () => {
     setUser(null);
-    localStorage.removeItem(STORAGE_KEY);
+    setToken("");
+    clearStoredAuth();
   };
+
+  /*
+  |--------------------------------------------------------------------------
+  | Context Value
+  |--------------------------------------------------------------------------
+  */
 
   const value = useMemo(
     () => ({
       user,
+      token,
       loading,
-      isAuthenticated: Boolean(user),
+      isAuthenticated:
+        Boolean(user && token),
+
       login,
       signup,
+      updateUser,
       logout,
     }),
-    [user, loading]
+    [user, token, loading]
   );
 
   return (
-    <AuthContext.Provider value={value}>
+    <AuthContext.Provider
+      value={value}
+    >
       {children}
     </AuthContext.Provider>
   );
 }
 
+/*
+|--------------------------------------------------------------------------
+| useAuth Hook
+|--------------------------------------------------------------------------
+*/
+
 function useAuth() {
-  const context = useContext(AuthContext);
+  const context =
+    useContext(AuthContext);
 
   if (!context) {
     throw new Error(

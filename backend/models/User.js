@@ -40,6 +40,55 @@ const userSchema = new mongoose.Schema(
         default: 0,
       },
     },
+
+    usage: {
+      date: {
+        type: String,
+        default: "",
+      },
+
+      aiSessions: {
+        type: Number,
+        default: 0,
+      },
+
+      aiTurns: {
+        type: Number,
+        default: 0,
+      },
+
+      aiTests: {
+        type: Number,
+        default: 0,
+      },
+
+      aiTestStartedAt: {
+        type: Date,
+        default: null,
+      },
+
+      practiceMinutesToday: {
+        type: Number,
+        default: 0,
+      },
+
+      currentSession: {
+        startedAt: {
+          type: Date,
+          default: null,
+        },
+
+        turns: {
+          type: Number,
+          default: 0,
+        },
+
+        active: {
+          type: Boolean,
+          default: false,
+        },
+      },
+    },
   },
   {
     timestamps: true,

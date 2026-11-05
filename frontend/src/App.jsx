@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import "./App.css";
+import { useAuth } from "./context/AuthContext.jsx";
+import { API_BASE_URL } from "./services/api.js";
 
 const characters = [
   { id: 1, name: "Maya", gender: "Female", mode: "Daily Conversation", emoji: "👩🏻", description: "Friendly, patient and easy to talk to." },
@@ -10,7 +12,90 @@ const characters = [
   { id: 6, name: "Alex", gender: "Male", mode: "Unknown Person", emoji: "👨🏻", description: "Natural real-life conversations with strangers." },
 ];
 
-const API = "http://127.0.0.1:5001";
+const API = API_BASE_URL;
+
+// Browser-native voices are free. We prefer a real English voice whose
+// name is commonly associated with the requested gender, then fall back to
+// another English voice. The exact voices available depend on macOS/Chrome.
+const characterVoicePreferences = {
+  Maya: { gender: "female", preferred: ["Samantha", "Ava", "Karen", "Moira", "Tessa"] },
+  Ryan: { gender: "male", preferred: ["Daniel", "Alex", "Fred", "Google UK English Male", "Google US English Male"] },
+  Sophia: { gender: "female", preferred: ["Ava", "Samantha", "Karen", "Moira", "Google US English Female"] },
+  Daniel: { gender: "male", preferred: ["Daniel", "Alex", "Fred", "Google UK English Male", "Google US English Male"] },
+  Emma: { gender: "female", preferred: ["Karen", "Samantha", "Ava", "Moira", "Tessa"] },
+  Alex: { gender: "male", preferred: ["Alex", "Daniel", "Fred", "Google US English Male", "Google UK English Male"] },
+};
+
+const findCharacterVoice = (characterName) => {
+  if (!("speechSynthesis" in window)) return null;
+
+  const config =
+    characterVoicePreferences[characterName] ||
+    { gender: "female", preferred: ["Samantha", "Ava", "Karen"] };
+
+  const voices = window.speechSynthesis
+    .getVoices()
+    .filter((voice) => /^(en)(-|$)/i.test(voice.lang || ""));
+
+  if (!voices.length) return null;
+
+  const preferred = config.preferred.map((name) => name.toLowerCase());
+
+  const exactPreferred = voices.find((voice) =>
+    preferred.some((name) => voice.name.toLowerCase() === name)
+  );
+
+  if (exactPreferred) return exactPreferred;
+
+  const namedPreferred = voices.find((voice) =>
+    preferred.some((name) => voice.name.toLowerCase().includes(name))
+  );
+
+  if (namedPreferred) return namedPreferred;
+
+  // macOS/Chrome does not expose a reliable gender property for every voice,
+  // so use conservative name heuristics only as a fallback.
+  const femaleNames = /samantha|ava|karen|moira|tessa|female|zira|susan|victoria/i;
+  const maleNames = /alex|daniel|fred|male|david|tom|aaron|rishi/i;
+
+  const genderVoice = voices.find((voice) =>
+    config.gender === "female"
+      ? femaleNames.test(voice.name)
+      : maleNames.test(voice.name)
+  );
+
+  return genderVoice || voices.find((voice) => voice.lang?.toLowerCase() === "en-us") || voices[0];
+};
+
+// Voice navigation commands are deliberately conservative: a bare command
+// works, and character-prefixed variants work with natural filler words.
+const detectVoiceNavigationCommand = (spokenText) => {
+  const normalized = String(spokenText || "")
+    .toLowerCase()
+    .replace(/[.,!?;:]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!normalized) return null;
+
+  const characterNames = characters
+    .map((character) => character.name.toLowerCase())
+    .join("|");
+
+  const commandBody = String.raw`(?:please\s+|can\s+you\s+|could\s+you\s+|would\s+you\s+|you\s+can\s+|let(?:'|’)s\s+|i\s+want\s+to\s+|take\s+me\s+to\s+)?`;
+
+  const patterns = [
+    ["skip", new RegExp(String.raw`^(?:(?:hey|okay|ok)\s+)?(?:${characterNames})?\s*${commandBody}(?:skip|skips)\s+(?:this\s+)?(?:the\s+)?question$|^(?:(?:hey|okay|ok)\s+)?(?:${characterNames})?\s*${commandBody}(?:skip|skips)\s+it$|^(?:(?:hey|okay|ok)\s+)?(?:${characterNames})?\s*skip$`, "i")],
+    ["next", new RegExp(String.raw`^(?:(?:hey|okay|ok)\s+)?(?:${characterNames})?\s*${commandBody}(?:go\s+to\s+|move\s+to\s+|take\s+me\s+to\s+)?next(?:\s+question)?$|^(?:(?:hey|okay|ok)\s+)?(?:${characterNames})?\s*next$`, "i")],
+    ["previous", new RegExp(String.raw`^(?:(?:hey|okay|ok)\s+)?(?:${characterNames})?\s*${commandBody}(?:go\s+to\s+|move\s+to\s+|take\s+me\s+to\s+)?(?:previous|last|back)(?:\s+question)?$|^(?:(?:hey|okay|ok)\s+)?(?:${characterNames})?\s*previous$|^(?:(?:hey|okay|ok)\s+)?(?:${characterNames})?\s*go\s+back$`, "i")],
+  ];
+
+  for (const [command, pattern] of patterns) {
+    if (pattern.test(normalized)) return command;
+  }
+
+  return null;
+};
 
 // Prevent the AI reply from repeating the question that is shown separately.
 // Remove the character's one-time introduction from later turns.
@@ -117,15 +202,13 @@ function App() {
   // -----------------------------
   // AUTHENTICATION
   // -----------------------------
-  const [authUser, setAuthUser] = useState(() => {
-    try {
-      const saved = localStorage.getItem("voxlivaUser");
-      return saved ? JSON.parse(saved) : null;
-    } catch {
-      return null;
-    }
-  });
-  const [authToken, setAuthToken] = useState(() => localStorage.getItem("voxlivaToken") || "");
+  const {
+    user: authUser,
+    token: authToken,
+    login,
+    signup,
+    logout: logoutAuth,
+  } = useAuth();
   const [authOpen, setAuthOpen] = useState(false);
   const [authMode, setAuthMode] = useState("login");
   const [authLoading, setAuthLoading] = useState(false);
@@ -149,6 +232,16 @@ function App() {
   const [error, setError] = useState("");
   const [learningMode, setLearningMode] = useState(null);
   const [grammarTopic, setGrammarTopic] = useState("Present Simple");
+
+  const [aiTestMode, setAiTestMode] = useState(null);
+  const [aiTestQuestions, setAiTestQuestions] = useState([]);
+  const [aiTestIndex, setAiTestIndex] = useState(0);
+  const [aiTestAnswer, setAiTestAnswer] = useState("");
+  const [aiTestResult, setAiTestResult] = useState(null);
+  const [aiTestLoading, setAiTestLoading] = useState(false);
+  const [aiTestStarted, setAiTestStarted] = useState(false);
+  const [aiTestAnswers, setAiTestAnswers] = useState([]);
+  const [aiTestEvaluating, setAiTestEvaluating] = useState(false);
   const [grammarAnswer, setGrammarAnswer] = useState("");
   const [grammarLoading, setGrammarLoading] = useState(false);
   const [hindiText, setHindiText] = useState("");
@@ -245,12 +338,14 @@ function App() {
         throw new Error("Authentication succeeded but user data was not returned.");
       }
 
-      localStorage.setItem("voxlivaToken", token);
-      localStorage.setItem("voxlivaUser", JSON.stringify(user));
-      localStorage.setItem("voxlivaUserName", user.name || "");
+      const stored = authMode === "signup"
+        ? signup(user, token)
+        : login(user, token);
 
-      setAuthToken(token);
-      setAuthUser(user);
+      if (!stored) {
+        throw new Error("Authentication succeeded but the session could not be stored.");
+      }
+
       setAuthOpen(false);
       setAuthForm({ name: "", email: "", password: "" });
       setAuthError("");
@@ -265,11 +360,7 @@ function App() {
     if (startedRef.current) {
       goBack();
     }
-    localStorage.removeItem("voxlivaToken");
-    localStorage.removeItem("voxlivaUser");
-    localStorage.removeItem("voxlivaUserName");
-    setAuthToken("");
-    setAuthUser(null);
+    logoutAuth();
     setAuthOpen(false);
     setAuthError("");
   };
@@ -281,6 +372,14 @@ function App() {
     }
     openAuth("login");
     return false;
+  };
+
+  const clearSessionIfUnauthorized = (response) => {
+    if (response?.status === 401) {
+      logoutAuth();
+      setAuthOpen(false);
+      setAuthError("");
+    }
   };
 
   const currentTurn =
@@ -316,6 +415,21 @@ function App() {
   useEffect(() => {
     startedRef.current = started;
   }, [started]);
+
+  useEffect(() => {
+    if (!("speechSynthesis" in window)) return;
+
+    const loadVoices = () => {
+      window.speechSynthesis.getVoices();
+    };
+
+    loadVoices();
+    window.speechSynthesis.addEventListener?.("voiceschanged", loadVoices);
+
+    return () => {
+      window.speechSynthesis.removeEventListener?.("voiceschanged", loadVoices);
+    };
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -395,18 +509,23 @@ function App() {
         isListeningRef.current = false;
         setIsListening(false);
 
-        // Voice navigation commands. Exact/near-exact commands only so normal
-        // English answers containing these words are not accidentally skipped.
-        const command = spokenText.toLowerCase().replace(/[.!?,]/g, "").trim();
-        if (/^(next|next question|go next|go to next|move to next|next one)$/.test(command)) {
+        // Voice navigation commands. These support bare commands and natural
+        // character-prefixed phrases such as:
+        // "Maya skip this question", "Maya you can skip this question",
+        // "Maya let's skip this question", "Ryan next question", etc.
+        const navigationCommand = detectVoiceNavigationCommand(spokenText);
+
+        if (navigationCommand === "next") {
           nextQuestionRef.current?.();
           return;
         }
-        if (/^(previous|previous question|go previous|go to previous|back|go back|previous one)$/.test(command)) {
+
+        if (navigationCommand === "previous") {
           previousQuestionRef.current?.();
           return;
         }
-        if (/^(skip|skip question|skip this|skip this question|skip it)$/.test(command)) {
+
+        if (navigationCommand === "skip") {
           skipQuestionRef.current?.();
           return;
         }
@@ -518,9 +637,15 @@ function App() {
     window.speechSynthesis.cancel();
 
     const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = "en-US";
-    utterance.rate = 0.94;
-    utterance.pitch = 1;
+    const activeCharacter = selectedCharacterRef.current;
+    const selectedVoice = findCharacterVoice(activeCharacter?.name);
+
+    utterance.lang = selectedVoice?.lang || "en-US";
+    if (selectedVoice) {
+      utterance.voice = selectedVoice;
+    }
+    utterance.rate = activeCharacter?.gender === "Male" ? 0.93 : 0.95;
+    utterance.pitch = activeCharacter?.gender === "Male" ? 0.92 : 1.05;
 
     utterance.onstart = () => {
       isSpeakingRef.current = true;
@@ -598,11 +723,14 @@ function App() {
         content: m.text,
       }));
 
-      const userName = localStorage.getItem("voxlivaUserName") || "Arnav";
+      const userName = authUser?.name || "Arnav";
 
       const response = await fetch(`${API}/api/chat`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${authToken}`,
+        },
         body: JSON.stringify({
           message: prompt,
           character: character.name,
@@ -612,6 +740,7 @@ function App() {
           userName,
         }),
       });
+      clearSessionIfUnauthorized(response);
 
       const data = await response.json();
 
@@ -734,12 +863,17 @@ function App() {
       const grammar = Number(result?.grammarScore ?? 0);
       const fluency = Number(result?.fluencyScore ?? 0);
       const vocabulary = Number(result?.vocabularyScore ?? 0);
+      // Pronunciation is temporarily excluded because Voxliva does not
+      // perform real audio-based pronunciation analysis yet.
+      // Punctuation/capitalization are intentionally not part of this gate.
+      const grammarPass = grammar >= 80;
+      const fluencyPass = fluency >= 70;
+      const vocabularyPass = vocabulary >= 65;
 
-      // Prefer the backend's explicit correctness when available.
-      // Otherwise use the learning score threshold.
       const passed =
-        result?.isCorrect === true ||
-        (grammar >= 80 && fluency >= 70 && vocabulary >= 65);
+        grammarPass &&
+        fluencyPass &&
+        vocabularyPass;
 
       const nextFeedback = {
         ...result,
@@ -799,11 +933,14 @@ function App() {
         { role: "user", content: clean },
       ];
 
-      const userName = localStorage.getItem("voxlivaUserName") || "Arnav";
+      const userName = authUser?.name || "Arnav";
 
       const response = await fetch(`${API}/api/chat`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${authToken}`,
+        },
         body: JSON.stringify({
           message: clean,
           character: character.name,
@@ -813,6 +950,7 @@ function App() {
           userName,
         }),
       });
+      clearSessionIfUnauthorized(response);
 
       const data = await response.json();
 
@@ -927,8 +1065,119 @@ function App() {
   };
 
   // -----------------------------
-  // PRACTICE SAME QUESTION
+  // AI ENGLISH TEST
   // -----------------------------
+  const startAiTest = async (mode) => {
+    if (!authToken) {
+      alert("Please login first to start an AI test.");
+      return;
+    }
+
+    setAiTestLoading(true);
+    setAiTestMode(mode);
+    setAiTestQuestions([]);
+    setAiTestAnswers([]);
+    setAiTestIndex(0);
+    setAiTestAnswer("");
+    setAiTestResult(null);
+    setAiTestStarted(false);
+    setAiTestEvaluating(false);
+
+    try {
+      const response = await fetch(`${API}/api/ai-test/start`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({ mode }),
+      });
+      clearSessionIfUnauthorized(response);
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data?.message || "Unable to start AI test."
+        );
+      }
+
+      const questions = Array.isArray(data?.questions)
+        ? data.questions
+        : [];
+
+      if (questions.length !== 5) {
+        throw new Error(
+          "AI did not return exactly 5 questions."
+        );
+      }
+
+      setAiTestQuestions(questions);
+      setAiTestAnswers(Array(questions.length).fill(""));
+      setAiTestStarted(true);
+    } catch (error) {
+      console.error("AI Test error:", error);
+
+      alert(
+        error.message ||
+        "Unable to start AI test."
+      );
+
+      setAiTestMode(null);
+      setAiTestQuestions([]);
+      setAiTestAnswers([]);
+    } finally {
+      setAiTestLoading(false);
+    }
+  };
+
+  const evaluateAiTest = async (finalAnswers) => {
+    if (!authToken) {
+      alert("Please login first.");
+      return;
+    }
+
+    setAiTestEvaluating(true);
+
+    try {
+      const response = await fetch(`${API}/api/ai-test/evaluate`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({
+          mode: aiTestMode,
+          questions: aiTestQuestions,
+          answers: finalAnswers,
+        }),
+      });
+      clearSessionIfUnauthorized(response);
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data?.message || "Unable to evaluate test."
+        );
+      }
+
+      if (!data?.result) {
+        throw new Error("Invalid evaluation received from AI.");
+      }
+
+      setAiTestResult(data.result);
+    } catch (error) {
+      console.error("AI Test evaluation error:", error);
+      alert(
+        error.message ||
+        "Unable to calculate score."
+      );
+    } finally {
+      setAiTestEvaluating(false);
+    }
+  };
+
   const practiceAgain = () => {
     setFeedback(null);
     setTranscript("");
@@ -1027,15 +1276,30 @@ function App() {
     try {
       const response = await fetch(`${API}/api/chat`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${authToken}`,
+        },
         body: JSON.stringify({
-          message: `Teach English grammar in simple language. Topic: ${grammarTopic}. Explain the rule, when to use it, 3 examples, common mistakes, and one short practice question. Do not ask a conversation question.`,
+          message: `Teach English grammar in very simple Hindi + English. Topic: ${grammarTopic}.
+
+Follow this exact learning structure:
+1. Topic name in English.
+2. Rule in simple English.
+3. Same rule explained simply in Hindi/Hinglish.
+4. At least 3 easy examples in English, and write the Hindi meaning directly below each example.
+5. Show 2 common mistakes with Wrong and Correct sentences, with a short Hindi explanation.
+6. Give one easy memory tip in Hindi.
+7. End with one short practice question for the learner.
+
+Do not use difficult grammar terminology unless you explain it. Do not ask a general conversation question.`,
           character: "Voxliva Grammar Teacher",
           mode: "Grammar Teaching",
           history: [],
           start: false,
         }),
       });
+      clearSessionIfUnauthorized(response);
       const data = await response.json();
       if (!response.ok || !data.success) throw new Error(data.error || "Grammar teacher failed");
       setGrammarAnswer(data.reply || "No explanation received.");
@@ -1055,7 +1319,10 @@ function App() {
     try {
       const response = await fetch(`${API}/api/chat`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${authToken}`,
+        },
         body: JSON.stringify({
           message: `The user wrote this Hindi or Hinglish text: "${textToTranslate}". Give the natural English version first, then briefly explain the useful English phrase. Do not ask a question.`,
           character: "Voxliva Translator",
@@ -1064,6 +1331,7 @@ function App() {
           start: false,
         }),
       });
+      clearSessionIfUnauthorized(response);
       const data = await response.json();
       if (!response.ok || !data.success) throw new Error(data.error || "Translation failed");
       setEnglishReply(data.reply || "No English reply received.");
@@ -1235,6 +1503,18 @@ function App() {
                 <div><span>Grammar</span><b>{feedback?.grammarScore ?? "--"}</b></div>
                 <div><span>Fluency</span><b>{feedback?.fluencyScore ?? "--"}</b></div>
                 <div><span>Vocabulary</span><b>{feedback?.vocabularyScore ?? "--"}</b></div>
+                <div>
+                  <span>Overall Performance</span>
+                  <b>
+                    {Math.round(
+                      (
+                        Number(feedback?.grammarScore ?? 0) * 0.40 +
+                        Number(feedback?.fluencyScore ?? 0) * 0.35 +
+                        Number(feedback?.vocabularyScore ?? 0) * 0.25
+                      )
+                    )}%
+                  </b>
+                </div>
               </div>
               {feedback?.correctedSentence && <div className="correction-card"><span>Natural sentence</span><p>{feedback.correctedSentence}</p><button onClick={speakCorrection}>🔊 Hear correction</button></div>}
               <div className="feedback-details">
@@ -1271,7 +1551,9 @@ function App() {
     .vx-character-page{min-height:calc(100vh - 76px);padding:34px clamp(20px,5vw,80px) 40px}.vx-character-head{text-align:center;margin-bottom:20px}.vx-character-head h1{font-size:40px;letter-spacing:-1.5px;margin:8px 0}.vx-character-head p{color:#777080;margin:0}.vx-character-grid{max-width:1240px;margin:auto;display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.vx-character-card{border:1px solid #e7def5;background:rgba(255,255,255,.92);border-radius:23px;padding:14px;display:grid;grid-template-columns:88px 1fr;gap:15px;text-align:left;cursor:pointer;transition:.2s;min-height:154px}.vx-character-card:hover{transform:translateY(-3px);box-shadow:0 14px 30px rgba(70,45,125,.1)}.vx-character-card.selected{border:2px solid #7949d4;box-shadow:0 14px 35px rgba(108,67,196,.16)}.vx-character-image{background:linear-gradient(145deg,#f0e8ff,#faf8ff);border-radius:17px;display:grid;place-items:center;font-size:58px}.vx-character-name{display:flex;justify-content:space-between;align-items:center}.vx-character-name h3{font-size:20px;margin:0}.vx-character-gender{font-size:12px;color:#817a8d;margin:4px 0 8px}.vx-mode{display:inline-flex;background:#eee5ff;color:#6e43c2;border-radius:999px;padding:5px 9px;font-size:11px;font-weight:900}.vx-character-card p{font-size:12px;line-height:1.4;color:#777080;margin:9px 0 0}.vx-startbar{max-width:1240px;margin:18px auto 0;background:#211b2f;border-radius:22px;padding:16px 20px;display:flex;align-items:center;justify-content:space-between;color:#fff}.vx-startbar span{color:#cfc5df}.vx-startbar strong{color:#fff}.vx-startbar button{border:0;background:#8254df;color:#fff;border-radius:13px;padding:12px 18px;font-weight:900;cursor:pointer}
     .vx-practice-grid{max-width:1100px;margin:auto;display:grid;grid-template-columns:repeat(3,1fr);gap:16px}.vx-practice-card{padding:25px;background:#fff;border:1px solid #e7e0f1;border-radius:22px;cursor:pointer;transition:.2s}.vx-practice-card:hover{transform:translateY(-3px);box-shadow:0 14px 30px rgba(70,45,125,.08)}.vx-practice-card .big{font-size:34px}.vx-practice-card h3{margin:12px 0 5px}.vx-practice-card p{margin:0;color:#777080;font-size:14px;line-height:1.5}
     .vx-learn-grid{max-width:1150px;margin:auto;display:grid;grid-template-columns:repeat(2,1fr);gap:20px}.vx-learn-card{background:#fff;border:1px solid #e7e0f1;border-radius:25px;padding:28px;box-shadow:0 12px 30px rgba(66,44,103,.06)}.vx-learn-card .big{font-size:35px}.vx-learn-card h2{margin:12px 0 6px}.vx-learn-card p{color:#777080;line-height:1.55}.vx-learn-card select,.vx-learn-card textarea{width:100%;padding:12px;border:1px solid #ded5ed;border-radius:13px;margin:8px 0 10px;font:inherit}.vx-learn-card textarea{min-height:130px;resize:vertical}.vx-learn-card button{border:0;background:#7548cc;color:#fff;border-radius:12px;padding:11px 15px;font-weight:850;cursor:pointer}.vx-learn-result{margin-top:15px;padding:15px;border-radius:15px;background:#f8f4ff;color:#4e4560;line-height:1.65;white-space:pre-wrap}
-    .vx-footer{background:#211b2f;color:#fff;text-align:center;padding:42px 20px}.vx-footer h2{margin:0 0 6px}.vx-footer p{margin:0;color:#bcb3ca}
+    .vx-footer{background:#211b2f;color:#fff;text-align:center;padding:42px 20px}.vx-test-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:22px}
+    .vx-test-grid .vx-practice-card{width:100%}
+    .vx-footer h2{margin:0 0 6px}.vx-footer p{margin:0;color:#bcb3ca}
     @media(max-width:900px){.vx-character-grid,.vx-feature-grid,.vx-practice-grid{grid-template-columns:repeat(2,1fr)}.vx-stats{grid-template-columns:repeat(2,1fr)}.vx-stat:first-child{border-radius:20px 0 0 0}.vx-stat:last-child{border-radius:0 0 20px 0}.vx-learn-grid{grid-template-columns:1fr}}
     @media(max-width:620px){.vx-navlinks{display:none}.vx-home-hero{min-height:520px}.vx-home-hero h1{letter-spacing:-2px}.vx-hero-actions{flex-direction:column}.vx-stats,.vx-character-grid,.vx-feature-grid,.vx-practice-grid{grid-template-columns:1fr}.vx-stat:first-child,.vx-stat:last-child{border-radius:0}.vx-character-card{min-height:135px}.vx-startbar{flex-direction:column;gap:12px;text-align:center}.vx-section{padding:52px 18px}}
   `;
@@ -1283,6 +1565,7 @@ function App() {
         <button className={page === "home" ? "active" : ""} onClick={() => navigate("home")}>Home</button>
         <button className={page === "characters" ? "active" : ""} onClick={() => navigate("characters")}>Characters</button>
         <button className={page === "practice" ? "active" : ""} onClick={() => navigate("practice")}>Practice</button>
+        <button className={page === "test" ? "active" : ""} onClick={() => navigate("test")}>Test</button>
         <button className={page === "learn" ? "active" : ""} onClick={() => navigate("learn")}>Learn</button>
       </nav>
       {authUser ? (
@@ -1332,6 +1615,500 @@ function App() {
       {renderNav()}
       <section className="vx-section" style={{minHeight:"calc(100vh - 76px)"}}><div className="vx-section-head"><span className="vx-badge">REAL-LIFE PRACTICE</span><h2>Practice English for every situation</h2><p>Pick a situation, choose an AI partner and start speaking.</p></div><div className="vx-practice-grid">{[["🎓","College","Practice classroom, friends and campus conversations."],["💼","Interview","Answer common interview questions with confidence."],["🏢","Office","Practice meetings, colleagues and workplace English."],["👥","Friends","Casual conversations, plans and everyday topics."],["🗣️","Unknown Person","Practice natural conversations with strangers."],["☀️","Daily Conversation","Talk about your day, hobbies, food, travel and life."]].map(([icon,title,desc])=><button key={title} className="vx-practice-card" onClick={()=>navigate("characters")}><div className="big">{icon}</div><h3>{title}</h3><p>{desc}</p></button>)}</div></section>
       <footer className="vx-footer"><h2>Practice. Speak. Improve.</h2><p>Voxliva keeps your English practice simple and consistent.</p></footer>
+    </>
+  );
+
+
+  const testPage = (
+    <>
+      {renderNav()}
+
+      <section
+        className="vx-section"
+        style={{ minHeight: "calc(100vh - 76px)" }}
+      >
+        <div className="vx-section-head">
+          <span className="vx-badge">AI ENGLISH TEST</span>
+          <h2>Test Your English with AI</h2>
+          <p>
+            Challenge yourself with grammar, vocabulary, conversation and
+            speaking tests.
+          </p>
+        </div>
+
+        <div className="vx-test-grid">
+          {[
+            ["🧠", "Grammar Test", "Test your grammar with practical English questions.", "Grammar"],
+            ["📚", "Vocabulary Test", "Check your vocabulary and word usage.", "Vocabulary"],
+            ["💬", "Conversation Test", "Answer real-life questions naturally.", "Conversation"],
+            ["🎤", "Speaking Test", "Test your English communication skills.", "Speaking"],
+          ].map(([icon, title, desc, mode]) => (
+            <button
+              key={title}
+              className="vx-practice-card"
+              onClick={() => startAiTest(mode)}
+              disabled={aiTestLoading || aiTestEvaluating}
+            >
+              <div className="big">{icon}</div>
+              <h3>{title}</h3>
+              <p>{desc}</p>
+
+              <div
+                style={{
+                  marginTop: 14,
+                  display: "inline-block",
+                  background: "#eee5ff",
+                  color: "#6e43c2",
+                  borderRadius: 999,
+                  padding: "7px 11px",
+                  fontSize: 12,
+                  fontWeight: 900,
+                }}
+              >
+                {aiTestLoading ? "Starting..." : "Start AI Test →"}
+              </div>
+            </button>
+          ))}
+        </div>
+
+        {aiTestMode && (
+          <section
+            className="vx-section"
+            style={{ paddingTop: 20, paddingBottom: 50 }}
+          >
+            <div
+              style={{
+                maxWidth: 900,
+                margin: "auto",
+                borderRadius: 28,
+                overflow: "hidden",
+                background: "linear-gradient(145deg, #ffffff, #f7f3ff)",
+                border: "1px solid #e9defd",
+                boxShadow: "0 20px 60px rgba(91, 58, 140, 0.12)",
+              }}
+            >
+              <div
+                style={{
+                  padding: "30px 32px 24px",
+                  background: "linear-gradient(135deg, #6d3fd1, #8d5ce6)",
+                  color: "#fff",
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    gap: 15,
+                    flexWrap: "wrap",
+                  }}
+                >
+                  <div>
+                    <div
+                      style={{
+                        fontSize: 13,
+                        fontWeight: 900,
+                        letterSpacing: 1.5,
+                        opacity: 0.85,
+                      }}
+                    >
+                      VOXLIVA • AI ASSESSMENT
+                    </div>
+                    <h2
+                      style={{
+                        margin: "8px 0 5px",
+                        fontSize: 30,
+                        fontWeight: 900,
+                      }}
+                    >
+                      {aiTestMode} Test
+                    </h2>
+                    <p style={{ margin: 0, opacity: 0.9 }}>
+                      Show your English skills and get instant AI feedback.
+                    </p>
+                  </div>
+
+                  <div
+                    style={{
+                      background: "rgba(255,255,255,0.18)",
+                      border: "1px solid rgba(255,255,255,0.25)",
+                      borderRadius: 18,
+                      padding: "12px 18px",
+                      textAlign: "center",
+                      minWidth: 90,
+                    }}
+                  >
+                    <div style={{ fontSize: 24, fontWeight: 900 }}>5</div>
+                    <div
+                      style={{
+                        fontSize: 11,
+                        fontWeight: 700,
+                        opacity: 0.85,
+                      }}
+                    >
+                      QUESTIONS
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {!aiTestStarted && aiTestLoading && (
+                <div style={{ padding: 60, textAlign: "center" }}>
+                  <div style={{ fontSize: 45, marginBottom: 15 }}>🤖</div>
+                  <h3 style={{ marginBottom: 8 }}>
+                    Creating your AI test...
+                  </h3>
+                  <p style={{ color: "#777", margin: 0 }}>
+                    Preparing 5 personalized English questions.
+                  </p>
+                </div>
+              )}
+
+              {aiTestStarted &&
+                !aiTestResult &&
+                aiTestQuestions.length > 0 && (
+                  <div style={{ padding: "30px 32px 35px" }}>
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        marginBottom: 10,
+                        fontSize: 13,
+                        fontWeight: 800,
+                        color: "#6d3fd1",
+                      }}
+                    >
+                      <span>
+                        Question {aiTestIndex + 1} of 5
+                      </span>
+                      <span>
+                        {Math.round(((aiTestIndex + 1) / 5) * 100)}%
+                      </span>
+                    </div>
+
+                    <div
+                      style={{
+                        height: 9,
+                        background: "#eee8f8",
+                        borderRadius: 20,
+                        overflow: "hidden",
+                        marginBottom: 30,
+                      }}
+                    >
+                      <div
+                        style={{
+                          height: "100%",
+                          width: `${((aiTestIndex + 1) / 5) * 100}%`,
+                          background:
+                            "linear-gradient(90deg, #6d3fd1, #a273f5)",
+                          borderRadius: 20,
+                          transition: "width 0.35s ease",
+                        }}
+                      />
+                    </div>
+
+                    <div
+                      style={{
+                        background: "#fff",
+                        border: "1px solid #eee7f7",
+                        borderRadius: 22,
+                        padding: 28,
+                        boxShadow: "0 10px 30px rgba(0,0,0,0.04)",
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 8,
+                          background: "#f1eaff",
+                          color: "#6d3fd1",
+                          borderRadius: 999,
+                          padding: "8px 13px",
+                          fontSize: 12,
+                          fontWeight: 900,
+                          marginBottom: 18,
+                        }}
+                      >
+                        ✨ AI QUESTION
+                      </div>
+
+                      <h3
+                        style={{
+                          fontSize: 22,
+                          lineHeight: 1.5,
+                          margin: "0 0 25px",
+                          color: "#211a2d",
+                        }}
+                      >
+                        {typeof aiTestQuestions[aiTestIndex] === "string"
+                          ? aiTestQuestions[aiTestIndex]
+                          : aiTestQuestions[aiTestIndex]?.question || ""}
+                      </h3>
+
+                      <textarea
+                        value={aiTestAnswer}
+                        onChange={(e) => setAiTestAnswer(e.target.value)}
+                        placeholder="Write your answer naturally in English..."
+                        style={{
+                          width: "100%",
+                          minHeight: 150,
+                          resize: "vertical",
+                          border: "2px solid #e9e1f5",
+                          borderRadius: 18,
+                          padding: 18,
+                          fontSize: 16,
+                          lineHeight: 1.6,
+                          outline: "none",
+                          boxSizing: "border-box",
+                          fontFamily: "inherit",
+                          background: "#fcfbff",
+                        }}
+                      />
+
+                      <div
+                        style={{
+                          marginTop: 20,
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                          gap: 15,
+                          flexWrap: "wrap",
+                        }}
+                      >
+                        <span style={{ color: "#888", fontSize: 13 }}>
+                          💡 Answer in your own words
+                        </span>
+
+                        <button
+                          className="vx-primary"
+                          disabled={aiTestEvaluating}
+                          onClick={() => {
+                            if (!aiTestAnswer.trim()) {
+                              alert("Please enter your answer first.");
+                              return;
+                            }
+
+                            const updatedAnswers = [...aiTestAnswers];
+                            updatedAnswers[aiTestIndex] = aiTestAnswer.trim();
+                            setAiTestAnswers(updatedAnswers);
+
+                            if (aiTestIndex < aiTestQuestions.length - 1) {
+                              setAiTestIndex((prev) => prev + 1);
+                              setAiTestAnswer("");
+                            } else {
+                              evaluateAiTest(updatedAnswers);
+                            }
+                          }}
+                          style={{
+                            minWidth: 170,
+                            padding: "13px 22px",
+                            borderRadius: 14,
+                            fontWeight: 900,
+                            border: "none",
+                            cursor: "pointer",
+                          }}
+                        >
+                          {aiTestEvaluating
+                            ? "🤖 Checking..."
+                            : aiTestIndex < aiTestQuestions.length - 1
+                              ? "Next Question →"
+                              : "Finish & Get Score 🎯"}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+              {aiTestEvaluating && (
+                <div style={{ padding: "45px 30px", textAlign: "center" }}>
+                  <div style={{ fontSize: 48, marginBottom: 15 }}>🤖</div>
+                  <h3>AI is checking your answers...</h3>
+                  <p style={{ color: "#777" }}>
+                    Analysing grammar, meaning and communication.
+                  </p>
+                </div>
+              )}
+
+              {aiTestResult && (
+                <div style={{ padding: "35px 32px 40px" }}>
+                  <div
+                    style={{
+                      textAlign: "center",
+                      padding: "30px 20px",
+                      borderRadius: 24,
+                      background: "linear-gradient(135deg, #f5efff, #fff)",
+                      border: "1px solid #e6dafa",
+                      marginBottom: 28,
+                    }}
+                  >
+                    <div style={{ fontSize: 55, marginBottom: 5 }}>🏆</div>
+                    <div
+                      style={{
+                        fontSize: 14,
+                        fontWeight: 900,
+                        color: "#6d3fd1",
+                        letterSpacing: 1,
+                      }}
+                    >
+                      TEST COMPLETED
+                    </div>
+                    <div
+                      style={{
+                        fontSize: 56,
+                        fontWeight: 1000,
+                        color: "#21152f",
+                        marginTop: 5,
+                      }}
+                    >
+                      {aiTestResult.score}/5
+                    </div>
+                    <div
+                      style={{
+                        display: "inline-block",
+                        marginTop: 5,
+                        padding: "8px 18px",
+                        borderRadius: 999,
+                        background: "#6d3fd1",
+                        color: "#fff",
+                        fontSize: 16,
+                        fontWeight: 900,
+                      }}
+                    >
+                      {aiTestResult.percentage}%
+                    </div>
+                    <p style={{ marginTop: 15, color: "#666" }}>
+                      Here&apos;s your detailed AI evaluation.
+                    </p>
+                  </div>
+
+                  <h3 style={{ marginBottom: 18, fontSize: 21 }}>
+                    📋 Answer Review
+                  </h3>
+
+                  {aiTestQuestions.map((question, index) => {
+                    const correct = aiTestResult[`q${index + 1}_correct`];
+                    const feedback = aiTestResult[`q${index + 1}_feedback`];
+                    const ideal = aiTestResult[`q${index + 1}_ideal`];
+
+                    return (
+                      <div
+                        key={index}
+                        style={{
+                          marginBottom: 18,
+                          padding: 20,
+                          borderRadius: 19,
+                          border: correct
+                            ? "1px solid #ccebd8"
+                            : "1px solid #f0d0d0",
+                          background: correct ? "#f5fff8" : "#fff8f8",
+                        }}
+                      >
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            gap: 15,
+                            alignItems: "flex-start",
+                          }}
+                        >
+                          <strong>Question {index + 1}</strong>
+                          <span
+                            style={{
+                              borderRadius: 999,
+                              padding: "5px 10px",
+                              fontSize: 12,
+                              fontWeight: 900,
+                              background: correct ? "#dff6e8" : "#ffe2e2",
+                              color: correct ? "#168043" : "#c03939",
+                            }}
+                          >
+                            {correct ? "✓ Correct" : "✗ Needs Improvement"}
+                          </span>
+                        </div>
+
+                        <p style={{ fontWeight: 800, lineHeight: 1.5 }}>
+                          {typeof question === "string"
+                            ? question
+                            : question?.question || ""}
+                        </p>
+
+                        <div
+                          style={{
+                            padding: 14,
+                            borderRadius: 13,
+                            background: "#fff",
+                            marginBottom: 10,
+                          }}
+                        >
+                          <div
+                            style={{
+                              fontSize: 11,
+                              fontWeight: 900,
+                              color: "#888",
+                              marginBottom: 5,
+                            }}
+                          >
+                            YOUR ANSWER
+                          </div>
+                          <div style={{ lineHeight: 1.5 }}>
+                            {aiTestAnswers[index] || "No answer"}
+                          </div>
+                        </div>
+
+                        <p style={{ lineHeight: 1.5, color: "#555" }}>
+                          <strong>💬 AI Feedback:</strong> {feedback}
+                        </p>
+
+                        <div
+                          style={{
+                            padding: 14,
+                            borderRadius: 13,
+                            background: "#f4efff",
+                            color: "#53328f",
+                          }}
+                        >
+                          <div
+                            style={{
+                              fontSize: 11,
+                              fontWeight: 900,
+                              marginBottom: 5,
+                            }}
+                          >
+                            💡 NATURAL ANSWER
+                          </div>
+                          {ideal}
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  <div style={{ textAlign: "center", marginTop: 28 }}>
+                    <button
+                      className="vx-primary"
+                      onClick={() => startAiTest(aiTestMode)}
+                      style={{
+                        padding: "14px 28px",
+                        borderRadius: 15,
+                        fontWeight: 900,
+                      }}
+                    >
+                      🔄 Retake {aiTestMode} Test
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </section>
+        )}
+      </section>
+
+      <footer className="vx-footer">
+        <h2>Test. Learn. Improve.</h2>
+        <p>
+          Use AI-powered tests to understand and improve your English.
+        </p>
+      </footer>
     </>
   );
 
@@ -1446,7 +2223,7 @@ function App() {
   return (
     <div className="vx-shell">
       <style>{globalStyles + authStyles}</style>
-      {page === "home" ? homePage : page === "characters" ? charactersPage : page === "practice" ? practicePage : learnPage}
+      {page === "home" ? homePage : page === "characters" ? charactersPage : page === "practice" ? practicePage : page === "test" ? testPage : learnPage}
       {authModal}
     </div>
   );

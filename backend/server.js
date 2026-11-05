@@ -1,6 +1,9 @@
 import "dotenv/config";
 
-import express from "express";
+import { createRequire } from "module";
+
+const require = createRequire(import.meta.url);
+const express = require("express");
 import cors from "cors";
 
 import connectDB from "./config/db.js";
@@ -8,6 +11,8 @@ import connectDB from "./config/db.js";
 import chatRoutes from "./routes/chatRoutes.js";
 import analyzeRoutes from "./routes/analyzeRoutes.js";
 import authRoutes from "./routes/authRoutes.js";
+import usageRoutes from "./routes/usageRoutes.js";
+import aiTestRoutes from "./routes/aiTestRoutes.js";
 
 const app = express();
 
@@ -64,6 +69,9 @@ app.use("/api/chat", chatRoutes);
 app.use("/api/analyze", analyzeRoutes);
 
 app.use("/api/auth", authRoutes);
+
+app.use("/api/usage", usageRoutes);
+app.use("/api/ai-test", aiTestRoutes);
 
 /*
 |--------------------------------------------------------------------------

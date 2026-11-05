@@ -6,7 +6,9 @@ const MODEL = "openai/gpt-oss-20b";
 async function callGroq({
   messages = [],
   schema = null,
+  jsonMode = false,
   maxCompletionTokens = 650,
+  reasoningEffort = "low",
 }) {
   const apiKey = process.env.GROQ_API_KEY;
 
@@ -18,6 +20,7 @@ async function callGroq({
     model: MODEL,
     messages,
     max_completion_tokens: maxCompletionTokens,
+    reasoning_effort: reasoningEffort,
     include_reasoning: false,
   };
 
@@ -25,6 +28,10 @@ async function callGroq({
     requestBody.response_format = {
       type: "json_schema",
       json_schema: schema,
+    };
+  } else if (jsonMode) {
+    requestBody.response_format = {
+      type: "json_object",
     };
   }
 
